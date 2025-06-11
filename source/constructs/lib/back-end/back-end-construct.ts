@@ -233,8 +233,11 @@ export class BackEnd extends Construct {
       ).toString()
     ).toString();
 
-    solutionsMetrics.addLambdaInvocationCount(imageHandlerLambdaFunction.functionName);
-    solutionsMetrics.addLambdaBilledDurationMemorySize([imageHandlerLogGroup], "BilledDurationMemorySizeQuery");
+    solutionsMetrics.addLambdaInvocationCount({ functionName: imageHandlerLambdaFunction.functionName });
+    solutionsMetrics.addLambdaBilledDurationMemorySize({
+      logGroups: [imageHandlerLogGroup],
+      queryDefinitionName: "BilledDurationMemorySizeQuery",
+    });
     solutionsMetrics.addQueryDefinition({
       logGroups: [imageHandlerLogGroup],
       queryString: new QueryString({
@@ -251,8 +254,14 @@ export class BackEnd extends Construct {
       queryDefinitionName: "RequestInfoQuery",
     });
 
-    solutionsMetrics.addCloudFrontMetric(conditionalCloudFrontDistributionId, "Requests");
-    solutionsMetrics.addCloudFrontMetric(conditionalCloudFrontDistributionId, "BytesDownloaded");
+    solutionsMetrics.addCloudFrontMetric({
+      distributionId: conditionalCloudFrontDistributionId,
+      metricName: "Requests",
+    });
+    solutionsMetrics.addCloudFrontMetric({
+      distributionId: conditionalCloudFrontDistributionId,
+      metricName: "BytesDownloaded",
+    });
 
     Aspects.of(solutionsMetrics).add(new ConditionAspect(props.sendAnonymousStatistics));
 

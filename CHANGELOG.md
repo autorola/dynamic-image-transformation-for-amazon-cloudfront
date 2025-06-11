@@ -5,12 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.4] - 2025-06-10
+
+### Security
+
+- Bump `tar-fs` to mitigate [CVE-2025-48387](https://avd.aquasec.com/nvd/cve-2025-48387)
+- Bump `aws-cdk-lib` to mitigate [GHSA-5pq3-h73f-66hr](https://github.com/advisories/GHSA-5pq3-h73f-66hr)
+
+## [7.0.3] - 2025-05-10
+
+### Fixed
+
+- `SOLUTION_VERSION` environment variable in metrics lambda construct
+
+## [7.0.2] - 2025-04-09
+
+### Security
+
+- Bump aws-cdk-lib to `2.188.0`
+- Update solution metrics lambda runtime to `nodejs22.x`
+
+## [7.0.1] - 2025-03-14
+
+### Changed
+
+- Updated metrics module to support identical metrics for different resources
+- Updated aws-cdk-lib and aws-cdk package versions
+
+### Security
+
+- Upgraded esbuild to v0.25.0 for advisory [GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)
+- Upgraded axios to 1.8.2 for advisory [GHSA-jr5f-v2jv-69x6](https://github.com/axios/axios/security/advisories/GHSA-jr5f-v2jv-69x6)
+
+### Fixed
+
+- Minor eslint warnings
+
 ## [7.0.0-AUTOROLA] - 2025-01-28
 
 ### Changed
 
 - Set `HttpVersion` to support both HTTP/2 and HTTP/3 protocols.
-- Set `AnonymousUsage` disabled as default value. 
+- Set `AnonymousUsage` disabled as default value.
 
 ### Added
 
