@@ -4,6 +4,7 @@
 import { Request } from 'express';
 import { applyAutoOptimizations } from './auto-optimizer';
 import { Transformation, TransformationPolicy } from '../../../types/transformation';
+import { ImageProcessingRequest } from '../../../types/image-processing-request';
 
 describe('applyAutoOptimizations', () => {
   let mockRequest: Partial<Request>;
@@ -76,6 +77,49 @@ describe('applyAutoOptimizations', () => {
       const result = applyAutoOptimizations(baseTransformations, mockRequest as Request, mockPolicy);
       
       expect(result).toHaveLength(0);
+    });
+
+    it('should skip format conversion when source is GIF and selected format is not animation-capable', () => {
+      mockPolicy.outputs = [{ type: 'format', value: 'auto' }];
+      mockRequest.headers = { 'dit-accept': 'image/jpeg' };
+      const imageRequest = { sourceImageContentType: 'image/gif' } as ImageProcessingRequest;
+
+      const result = applyAutoOptimizations(baseTransformations, mockRequest as Request, mockPolicy, imageRequest);
+
+      expect(result).toHaveLength(0);
+    });
+
+    it('should allow format conversion when source is GIF and selected format is webp', () => {
+      mockPolicy.outputs = [{ type: 'format', value: 'auto' }];
+      mockRequest.headers = { 'dit-accept': 'image/webp' };
+      const imageRequest = { sourceImageContentType: 'image/gif' } as ImageProcessingRequest;
+
+      const result = applyAutoOptimizations(baseTransformations, mockRequest as Request, mockPolicy, imageRequest);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ type: 'format', value: 'webp', source: 'auto' });
+    });
+
+    it('should allow format conversion when source is GIF and selected format is avif', () => {
+      mockPolicy.outputs = [{ type: 'format', value: 'auto' }];
+      mockRequest.headers = { 'dit-accept': 'image/avif' };
+      const imageRequest = { sourceImageContentType: 'image/gif' } as ImageProcessingRequest;
+
+      const result = applyAutoOptimizations(baseTransformations, mockRequest as Request, mockPolicy, imageRequest);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ type: 'format', value: 'avif', source: 'auto' });
+    });
+
+    it('should not restrict format selection for non-GIF sources', () => {
+      mockPolicy.outputs = [{ type: 'format', value: 'auto' }];
+      mockRequest.headers = { 'dit-accept': 'image/jpeg' };
+      const imageRequest = { sourceImageContentType: 'image/png' } as ImageProcessingRequest;
+
+      const result = applyAutoOptimizations(baseTransformations, mockRequest as Request, mockPolicy, imageRequest);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ type: 'format', value: 'jpeg', source: 'auto' });
     });
 
 

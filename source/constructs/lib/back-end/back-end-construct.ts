@@ -25,6 +25,7 @@ import { ApiGatewayArchitecture } from "./api-gateway-architecture";
 import { S3ObjectLambdaArchitecture } from "./s3-object-lambda-architecture";
 import { SolutionsMetrics, ExecutionDay } from "metrics-utils";
 import { ConditionAspect } from "../../utils/aspects";
+import { EventSourceMappingResolver } from "../common-resources/event-source-mapping-resolver-construct";
 import { OperationalInsightsDashboard } from "../dashboard/ops-insights-dashboard";
 import { Dashboard } from "aws-cdk-lib/aws-cloudwatch";
 
@@ -229,6 +230,15 @@ export class BackEnd extends Construct {
         ExecutionDay.MONDAY
       ).toString(),
     });
+
+    // Resolve EventSourceMapping conflicts caused by the construct ID rename (v7→v8).
+    // Only runs on first creation of this Custom Resource (i.e. the upgrade).
+    const resolverTargets = EventSourceMappingResolver.findTargetsInMetrics(solutionsMetrics);
+    if (resolverTargets) {
+      const resolver = new EventSourceMappingResolver(this, "EventSourceMappingResolver", resolverTargets);
+      resolver.addDependencyToEventSourceMappings(solutionsMetrics);
+      Aspects.of(resolver).add(new ConditionAspect(props.sendAnonymousStatistics));
+    }
 
     const conditionalCloudFrontDistributionId = Fn.conditionIf(
       props.conditions.useExistingCloudFrontDistributionCondition.logicalId,

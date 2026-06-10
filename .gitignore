@@ -36,9 +36,12 @@ bom.json
 **/.idea
 build
 dist
+git-info
 
 # amazon q
 .q
+.amazonq
+.kiro
 
 # Cypress artifacts
 source/admin-ui/src/e2e-tests/artifacts/

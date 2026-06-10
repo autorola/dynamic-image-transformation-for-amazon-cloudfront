@@ -7,6 +7,7 @@ import { ImageProcessingRequest } from '../../../types/image-processing-request'
 
 const FORMAT_PRIORITY = ['webp', 'avif', 'jpeg', 'png', 'heif', 'tiff', 'raw', 'gif'];
 // TODO, DISCUSS WITH TEAM FOR OPTIMAL FORMAT PRIORITIY LIST
+const ANIMATION_CAPABLE_FORMATS = new Set(['webp', 'avif', 'gif']);
 const FORMAT_MAPPING: Record<string, string> = {
   'image/webp': 'webp',
   'image/png': 'png',
@@ -73,6 +74,12 @@ function getFormatOptimizations(req: Request, formatConfig: any, imageRequest?: 
     return [];
   }
   
+  // Skip format conversion if source is a GIF and selected format cannot carry animation
+  const sourceIsGif = imageRequest?.sourceImageContentType === 'image/gif';
+  if (sourceIsGif && !ANIMATION_CAPABLE_FORMATS.has(selectedFormat)) {
+    return [];
+  }
+
   // Check if source image format matches selected format to avoid unnecessary transformation
   if (imageRequest?.sourceImageContentType) {
     const sourceFormat = FORMAT_MAPPING[imageRequest.sourceImageContentType];

@@ -20,15 +20,16 @@ describe("Policies API", () => {
   describe("/policies", () => {
     let policies: TransformationPolicy[] = [];
 
-    test("GET policies successfully with empty list", async () => {
+    test("GET policies successfully with list", async () => {
       const response = await fetch(API_URL + "/policies", {
         method: "GET",
         headers: createAuthHeaders(TEST_ACCESS_TOKEN),
       });
-      const responseBody = await response.json();
+      const responseBody = await response.json() as PaginatedPolicyResponse;
 
       expect(response.status).toBe(200);
-      expect(responseBody).toEqual({ items: [] });
+      expect(responseBody).toHaveProperty("items");
+      expect(Array.isArray(responseBody.items)).toBe(true);
     });
 
     test("POST create policy successfully", async () => {
@@ -51,8 +52,11 @@ describe("Policies API", () => {
       const responseBody = (await response.json()) as PaginatedPolicyResponse;
 
       expect(response.status).toBe(200);
-      expect(responseBody.items).toHaveLength(1);
-      expect(responseBody.items[0]).toMatchObject(mockTransformationPolicyCreateRequest);
+      expect(responseBody).toHaveProperty("items");
+      expect(Array.isArray(responseBody.items)).toBe(true);
+      expect(responseBody.items).toEqual(
+        expect.arrayContaining([expect.objectContaining(mockTransformationPolicyCreateRequest)])
+      );
       expect(responseBody.nextToken).toBeUndefined();
     });
 

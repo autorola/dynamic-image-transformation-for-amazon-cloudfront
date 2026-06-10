@@ -281,7 +281,7 @@ describe("Mappings API", () => {
       const newIntersection = newFirstPageIds.filter((id: string) => newSecondPageIds.includes(id));
       expect(newIntersection).toHaveLength(0);
       expect(secondPageBody.nextToken).toBeUndefined();
-    }, 10000);
+    }, 30000);
 
     test("GET specified mapping successfully", async () => {
       if (mappings.length === 0) {

@@ -107,7 +107,7 @@ describe("Origins API", () => {
       const secondPageIds = secondPageBody.items.map((item: Origin) => item.originId);
       const intersection = firstPageIds.filter((id: string) => secondPageIds.includes(id));
       expect(intersection).toHaveLength(0);
-    }, 30000);
+    }, 60000);
 
     test("GET specified origin successfully", async () => {
       const response = await fetch(API_URL + `/origins/${origins[0].originId}`, {

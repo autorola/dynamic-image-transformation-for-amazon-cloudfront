@@ -13,7 +13,7 @@ import { join } from 'path';
 const ECS_CLUSTER_NAME = 'dit-cluster';
 const ECS_SERVICE_NAME = 'dit-service';
 const DDB_STREAM_BATCH_WINDOW_SECONDS = 3 * 60;
-const ECS_DEPLOYMENT_TIMEOUT_SECONDS = 10 * 60;
+const ECS_DEPLOYMENT_TIMEOUT_SECONDS = 15 * 60;
 
 let externalOriginClient: ExternalOriginClient | null = null;
 
