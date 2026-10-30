@@ -1280,7 +1280,7 @@ function processQueryParams(querystring) {
             "AcmCertificateArn": {
               "Ref": "CloudFrontCertificateArnParameter",
             },
-            "MinimumProtocolVersion": "TLSv1.2_2021",
+            "MinimumProtocolVersion": "TLSv1.2_2025",
             "SslSupportMethod": "sni-only",
           },
           "WebACLId": {
