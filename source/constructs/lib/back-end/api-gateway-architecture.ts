@@ -20,6 +20,7 @@ import {
   FunctionRuntime,
   IDistribution,
   HttpVersion,
+  SecurityPolicyProtocol,
 } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
@@ -102,6 +103,7 @@ export class ApiGatewayArchitecture {
       ],
       domainNames: props.cloudFrontAliases,
       certificate: Certificate.fromCertificateArn(scope, "cert", props.cloudFrontCertificateArn),
+      minimumProtocolVersion: SecurityPolicyProtocol.TLS_V1_2_2025,
       webAclId: props.cloudFrontWebAclArn,
       defaultRootObject: props.cloudFrontDefaultRootObject,
       httpVersion: HttpVersion.HTTP2_AND_3,
