@@ -73,6 +73,8 @@ export class AlbEcsConstruct extends Construct {
   public readonly service: ecs.FargateService;
   public readonly loadBalancer: elbv2.ApplicationLoadBalancer;
   public readonly targetGroup: elbv2.ApplicationTargetGroup;
+  // A public literal, so defense-in-depth only; isolation comes from the internal ALB and its security group.
+  // Must match the VpcOrigin customHeaders in stacks/image-processing-stack.ts.
   private readonly customHeaderName = "X-Origin-Verify";
   private readonly customHeaderValue = "CloudFrontOrigin";
 
@@ -99,6 +101,7 @@ export class AlbEcsConstruct extends Construct {
       this.taskDefinition,
       props.imageUri,
       props.ecsConfig.limitInputPixels,
+      props.ecsConfig.memory,
       props.configTableArn,
       props.originOverrideHeader,
       props.userPoolId,
@@ -169,6 +172,7 @@ export class AlbEcsConstruct extends Construct {
     taskDefinition: ecs.TaskDefinition,
     imageUri: string,
     limitInputPixels: number | string,
+    taskMemoryMib: number | string,
     configTableArn?: string,
     originOverrideHeader?: string,
     userPoolId?: string,
@@ -190,6 +194,9 @@ export class AlbEcsConstruct extends Construct {
 
     // Cap Sharp's decode-memory to a per-tier ceiling (50 MP on 2 GB, 100 MP on 4 GB) so an over-limit image is rejected before raster allocation rather than OOMing the task.
     environment.LIMIT_INPUT_PIXELS = Token.asString(limitInputPixels);
+
+    // Fargate sets memory at the task level, which the container cannot read reliably, so pass the size for the origin body limit.
+    environment.DIT_TASK_MEMORY_MIB = Token.asString(taskMemoryMib);
 
     // Pass Cognito User Pool ID and Client ID for application-level JWT validation in the container
     if (userPoolId) {

@@ -991,7 +991,7 @@ function processQueryParams(querystring) {
             "Arn",
           ],
         },
-        "Runtime": "nodejs22.x",
+        "Runtime": "nodejs24.x",
         "Tags": [
           {
             "Key": "SolutionId",
@@ -2225,7 +2225,7 @@ function processQueryParams(querystring) {
             "Arn",
           ],
         },
-        "Runtime": "nodejs22.x",
+        "Runtime": "nodejs24.x",
         "Tags": [
           {
             "Key": "SolutionId",
@@ -2940,7 +2940,7 @@ function handler(event) {
             "Arn",
           ],
         },
-        "Runtime": "nodejs22.x",
+        "Runtime": "nodejs24.x",
         "Tags": [
           {
             "Key": "SolutionId",
@@ -3397,7 +3397,7 @@ function handler(event) {
             "Arn",
           ],
         },
-        "Runtime": "nodejs22.x",
+        "Runtime": "nodejs24.x",
         "Tags": [
           {
             "Key": "SolutionId",
@@ -3953,6 +3953,9 @@ function handler(event) {
         },
       },
       "Properties": {
+        "Architectures": [
+          "arm64",
+        ],
         "Code": {
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
@@ -3970,6 +3973,7 @@ function handler(event) {
             "Ref": "CommonResourcesCustomResourcesDeployWebsiteAwsCliLayerBC025F39",
           },
         ],
+        "MemorySize": 1024,
         "Role": {
           "Fn::GetAtt": [
             "CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRole89A01265",
@@ -4150,6 +4154,9 @@ function handler(event) {
           "DefaultCacheBehavior": {
             "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
             "Compress": true,
+            "ResponseHeadersPolicyId": {
+              "Ref": "FrontEndDistributionToS3ResponseHeadersPolicy16DC89C0",
+            },
             "TargetOriginId": "TestStackFrontEndDistributionToS3CloudFrontDistributionOrigin12FCDC222",
             "ViewerProtocolPolicy": "redirect-to-https",
           },
@@ -4246,6 +4253,41 @@ function handler(event) {
         },
       },
       "Type": "AWS::CloudFront::OriginAccessControl",
+    },
+    "FrontEndDistributionToS3ResponseHeadersPolicy16DC89C0": {
+      "Condition": "CommonResourcesDeployDemoUICondition308D3B09",
+      "Properties": {
+        "ResponseHeadersPolicyConfig": {
+          "Name": {
+            "Fn::Join": [
+              "",
+              [
+                "DIT-DemoUI-Headers-",
+                {
+                  "Fn::Select": [
+                    2,
+                    {
+                      "Fn::Split": [
+                        "/",
+                        {
+                          "Ref": "AWS::StackId",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            ],
+          },
+          "SecurityHeadersConfig": {
+            "FrameOptions": {
+              "FrameOption": "DENY",
+              "Override": true,
+            },
+          },
+        },
+      },
+      "Type": "AWS::CloudFront::ResponseHeadersPolicy",
     },
     "FrontEndDistributionToS3S3Bucket3A171D78": {
       "Condition": "CommonResourcesDeployDemoUICondition308D3B09",

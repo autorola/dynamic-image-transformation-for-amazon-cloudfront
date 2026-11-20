@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.3] - 2026-10-29
+
+### Changed
+
+- The CDK `BucketDeployment` helper Lambda that copies the demo UI (Lambda) and admin UI (ECS) assets during stack create, update and delete now runs on arm64 with 1024 MB of memory (was x86_64 with 128 MB), following the `aws-cdk-lib` defaults. Existing stacks replace this function on their next update
+- ECS invalid content type errors now log the resolved origin URL
+- ECS unsupported image type errors no longer log the userinfo or query string of the origin URL
+
+### Fixed
+
+- `stripExif` (and Thumbor `strip_exif()`) now removes EXIF, XMP and IPTC metadata, keeping only the ICC color profile and the orientation tag, on both Lambda and ECS. Image pixels and dimensions are unchanged, and the DIT `Software` EXIF tag is no longer added. Invalidate your CloudFront distribution to apply the fix to images already cached [#636](https://github.com/aws-solutions/dynamic-image-transformation-for-amazon-cloudfront/issues/636)
+- ECS now applies the input pixel limit before checking a source image for transparency, so an oversized image is rejected without being decoded first
+- The management API now rejects creating or renaming an origin, transformation policy or mapping to a name or pattern that is already in use. Names and patterns compare case-insensitively, path patterns also ignore leading, trailing and repeated slashes, and mapping names must be unique across path and host mappings. Previously these duplicates were accepted, and duplicate mapping patterns made request routing depend on load order. Existing duplicates are not changed and remain editable
+- ECS stacks whose creation is cancelled or rolled back while the Admin UI CSP is being applied can now be deleted (previously the delete failed on `CSPUpdaterCustomResource`)
+- ECS stacks whose Admin UI CloudFront distribution was already deleted outside CloudFormation can now be deleted
+
+### Security
+
+- Lambda demo UI responses now send `X-Frame-Options: DENY`, so other sites can no longer embed the demo UI in a frame
+- ECS now stops reading an origin image once it exceeds half of the task's memory, and rejects it up front when its declared size is already larger. The request returns a 502 instead of exhausting container memory. Origin files above that size could previously succeed when most of their bytes were not decoded (for example trailing padding or large embedded data) and now fail; use a larger DeploymentSize if you serve them. A watermark overlay gets whatever part of that limit the source image leaves
+- Bump `aws-cdk-lib` to 2.273.0 to update its bundled `brace-expansion` copy to 5.0.12, mitigating [CVE-2026-102276](https://avd.aquasec.com/nvd/cve-2026-102276), [CVE-2026-102277](https://avd.aquasec.com/nvd/cve-2026-102277), and [CVE-2026-102278](https://avd.aquasec.com/nvd/cve-2026-102278)
+- Bump `handlebars` to 4.7.10 to mitigate [CVE-2026-106444](https://avd.aquasec.com/nvd/cve-2026-106444), [CVE-2026-106445](https://avd.aquasec.com/nvd/cve-2026-106445), and [CVE-2026-106446](https://avd.aquasec.com/nvd/cve-2026-106446)
+- Bump `vite` to 6.4.5 to mitigate [CVE-2026-112942](https://avd.aquasec.com/nvd/cve-2026-112942), [CVE-2026-112943](https://avd.aquasec.com/nvd/cve-2026-112943), [CVE-2026-112944](https://avd.aquasec.com/nvd/cve-2026-112944), [CVE-2026-112945](https://avd.aquasec.com/nvd/cve-2026-112945), and [CVE-2026-112946](https://avd.aquasec.com/nvd/cve-2026-112946)
+- Bump `vitest` to 4.1.12 to mitigate [CVE-2026-112949](https://avd.aquasec.com/nvd/cve-2026-112949) and [CVE-2026-112950](https://avd.aquasec.com/nvd/cve-2026-112950)
+- Bump `body-parser` to 1.20.9 to mitigate [CVE-2026-111181](https://avd.aquasec.com/nvd/cve-2026-111181)
+- Bump `qs` to 6.16.1 to mitigate [CVE-2026-110816](https://avd.aquasec.com/nvd/cve-2026-110816)
+- Bump `zod` to 4.6.7 to mitigate [CVE-2023-54404](https://avd.aquasec.com/nvd/cve-2023-54404). The management API now also rejects transformation policies and origins whose lists exceed these limits, so one request can no longer make validation report an error for every list entry: 100 content moderation labels of at most 100 characters each, 2 smart crop priorities, 50 condition values, 20 autosize widths, 20 quality DPR rows, 3 output optimizations and 20 origin headers. A policy over 10 KB now reports only the size error. A URL edit with more than 100 moderation labels, a label over 100 characters or more than 2 smart crop priorities is ignored like any other invalid edit. Existing policies and origins are unchanged and keep serving images; a stored policy over a limit must be brought within it before it can be saved from the admin UI or updated through an API request that includes `policyJSON`
+
+## [8.1.2] - 2026-10-08
+
+### Added
+
+- Accept `tif` as an alias for `tiff` output format [#608](https://github.com/aws-solutions/dynamic-image-transformation-for-amazon-cloudfront/pull/608)
+
+### Changed
+
+- Lambda functions now run on Node.js 24 (`nodejs24.x`), and the ECS container image now runs on Node.js 24 (was Node.js 20)
+- ECS now fetches each origin image with a single GET request instead of a HEAD preflight followed by a GET
+- ECS container logs no longer include per-request debug output, and the origin override log line records only the origin host instead of the full header value
+
+### Fixed
+
+- ECS image responses now send `Cross-Origin-Resource-Policy: cross-origin`, so other sites can embed images with `<img>`. Invalidate your CloudFront distribution to apply the header to images already cached [#624](https://github.com/aws-solutions/dynamic-image-transformation-for-amazon-cloudfront/issues/624)
+- Lambda SVG requests with no edits no longer return a 500 error [#604](https://github.com/aws-solutions/dynamic-image-transformation-for-amazon-cloudfront/issues/604)
+- ECS `auto` format no longer drops transparency or animation. When the negotiated format cannot keep the source's alpha channel or animation frames, the source format is kept instead. Explicit policy and URL formats are unchanged
+- Lambda S3 Object Lambda error responses now send a valid `Cache-Control: max-age=10,public` header
+
+### Security
+
+- Bump `adm-zip` to 0.6.1 to mitigate [CVE-2026-76845](https://avd.aquasec.com/nvd/cve-2026-76845) and [CVE-2026-77301](https://avd.aquasec.com/nvd/cve-2026-77301)
+- Override `brace-expansion` to 1.1.21, 2.1.7, and 5.0.12 to mitigate [CVE-2026-102276](https://avd.aquasec.com/nvd/cve-2026-102276), [CVE-2026-102277](https://avd.aquasec.com/nvd/cve-2026-102277), and [CVE-2026-102278](https://avd.aquasec.com/nvd/cve-2026-102278). The copy bundled inside `aws-cdk-lib` is still 5.0.9 and will be updated when an `aws-cdk-lib` release includes the fix
+- Bump `compression` to 1.8.2 to mitigate [CVE-2026-87776](https://avd.aquasec.com/nvd/cve-2026-87776)
+- Bump `moment` to 2.31.0 to mitigate [CVE-2026-17495](https://avd.aquasec.com/nvd/cve-2026-17495)
+- Bump `morgan` to 1.12.1 to mitigate [CVE-2026-87859](https://avd.aquasec.com/nvd/cve-2026-87859). Container access logs now escape quotes in the Referer and User-Agent fields, so log metric filters that match raw quotes in those fields may need updating
+- Bump `proxy-addr` to 2.0.8 to mitigate [CVE-2026-90711](https://avd.aquasec.com/nvd/cve-2026-90711)
+- Bump `sharp` to 0.35.5 to mitigate [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w) in its bundled librsvg
+- Bump `source-map-js` to 1.2.2 to mitigate [CVE-2026-93749](https://avd.aquasec.com/nvd/cve-2026-93749)
+- Fix a potential ReDoS in the Lambda image handler where bucket names from the `SOURCE_BUCKETS` environment variable were used to build a regular expression. The `s3:` bucket tag is now matched literally, and invalid bucket names in `SOURCE_BUCKETS` are logged and ignored
+
 ## [8.1.1] - 2026-09-10
 
 ### Security

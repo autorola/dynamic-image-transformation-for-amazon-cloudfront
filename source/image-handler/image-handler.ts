@@ -40,23 +40,20 @@ export class ImageHandler {
   // eslint-disable-next-line @typescript-eslint/ban-types
   private async instantiateSharpImage(originalImage: Buffer, edits: ImageEdits, options: Object): Promise<Sharp> {
     try {
-      await sharp(originalImage, options).metadata(); // validation
-      // Default behavior: keep all metadata and ICC profile
-      let image = sharp(originalImage, options).keepIccProfile().keepMetadata();
+      const { orientation } = await sharp(originalImage, options).metadata(); // validation
+      // Keep the ICC profile on every path; Sharp would otherwise convert to sRGB.
+      const image = sharp(originalImage, options).keepIccProfile();
 
       if (edits?.stripExif === true) {
-        // Removes all EXIF by inserting minimal EXIF tag. Leaves ICC untouched.
-        image.keepIccProfile().withExif({
-          IFD0: {
-            Software: 'Dynamic Image Transformation for Amazon CloudFront'
-          }
-        });
-        delete edits.stripExif;
+        // Keep only ICC and the orientation tag: keepMetadata() bits cannot be cleared, and pixels are not rotated.
+        if (orientation) image.withExif({ IFD0: { Orientation: String(orientation) } });
+      } else {
+        image.keepMetadata();
       }
 
       if (edits?.stripIcc === true) {
-        // Strips ICC by defaulting to sRGB color space, while keeping EXIF untouched.
-        image.keepExif().withIccProfile('srgb');
+        // Replaces the ICC with sRGB. EXIF is left to the branch above: keepExif() here would copy back the source EXIF.
+        image.withIccProfile("srgb");
         delete edits.stripIcc;
       }
 
@@ -103,6 +100,8 @@ export class ImageHandler {
   async process(imageRequestInfo: ImageRequestInfo): Promise<Buffer> {
     const { originalImage, edits } = imageRequestInfo;
     const { SHARP_SIZE_LIMIT } = process.env;
+    // "" (the CDK default in constructs/lib/serverless-image-stack.ts) or non-numeric => true, Sharp's default
+    // pixel guard; "0" => 0, which Sharp treats as unlimited.
     const limitInputPixels: number | boolean =
       SHARP_SIZE_LIMIT === "" || isNaN(Number(SHARP_SIZE_LIMIT)) || Number(SHARP_SIZE_LIMIT);
     const options = {
@@ -430,6 +429,8 @@ export class ImageHandler {
     moderationLabels: string[],
     foundContentLabels: DetectModerationLabelsResponse
   ): void {
+    // 50 is a DIT product default (no upstream source). Sharp blur sigma is valid 0.3-1000; an out-of-range value
+    // skips the blur silently instead of erroring.
     const blurValue = blur !== undefined ? Math.ceil(blur) : 50;
 
     if (blurValue >= 0.3 && blurValue <= 1000) {
@@ -602,14 +603,7 @@ export class ImageHandler {
   }
 
   /**
-   *
-   * @param response the response from a Rekognition detectFaces API call
-   * @param faceIndex the index number of the face detected
-   * @param boundingBox the box bounds
-   * @param boundingBox.Height height of bounding box
-   * @param boundingBox.Left left side of bounding box
-   * @param boundingBox.Top top of bounding box
-   * @param boundingBox.Width width of bounding box
+   * Clamps the Rekognition face box into the image, since Rekognition can return bounds below 0 or above 1.
    */
   private handleBounds(
     response: DetectFacesResponse,
@@ -644,6 +638,7 @@ export class ImageHandler {
     try {
       const response = await this.rekognitionClient.send(new DetectFacesCommand(params));
       if (response.FaceDetails.length <= 0) {
+        // No face detected: crop to the full frame rather than failing the request.
         return { height: 1, left: 0, top: 0, width: 1 };
       }
 
@@ -658,6 +653,8 @@ export class ImageHandler {
         width: boundingBox.Width,
       };
     } catch (error) {
+      // Patterns are Node.js TypeError wordings (<=14 and 16+) thrown by handleBounds when faceIndex is past the
+      // detected faces; they are not Rekognition SDK errors.
       const errorMapping: ErrorMapping[] = [
         {
           pattern: "Cannot read property 'BoundingBox' of undefined",
@@ -699,6 +696,7 @@ export class ImageHandler {
     try {
       const params = {
         Image: { Bytes: imageBuffer },
+        // 75 is a DIT product default with no upstream source; Rekognition's own default MinConfidence is 50.
         MinConfidence: minConfidence ?? 75,
       };
       return await this.rekognitionClient.send(new DetectModerationLabelsCommand(params));
@@ -729,6 +727,7 @@ export class ImageHandler {
         return "png";
       case ImageFormatTypes.WEBP:
         return "webp";
+      case ImageFormatTypes.TIF:
       case ImageFormatTypes.TIFF:
         return "tiff";
       case ImageFormatTypes.HEIF:
@@ -769,6 +768,7 @@ export class ImageHandler {
     return { imageBuffer, format };
   }
 
+  // Order: ImageHandlerError passes through unchanged, then the first matching errorMappings pattern, then defaultError.
   private handleError(error: Error, defaultError: Error, errorMappings: ErrorMapping[] = []): never {
     console.error(error);
 

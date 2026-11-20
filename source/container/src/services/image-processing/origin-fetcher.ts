@@ -7,68 +7,96 @@ import { ImageProcessingError } from './types';
 import { S3UrlHelper } from '../../utils/s3-url-helper';
 import { UrlValidator } from '../../utils/url-validator';
 import { S3ErrorHandler } from '../../utils/s3-error-handler';
+import { urlWithoutQuery } from '../../utils/url-without-query';
+import { ORIGIN_BODY_LIMIT_BYTES, assertDeclaredLength, readNodeStreamWithLimit, readWebStreamWithLimit } from '../../utils/origin-body-limit';
 
 export class OriginFetcher {
   private s3Client: S3Client;
   private httpTimeout: number = 30000;
 
-  constructor() {
+  constructor(private readonly maxBodyBytes: number = ORIGIN_BODY_LIMIT_BYTES) {
     this.s3Client = new S3Client({
       ...getOptions(),
       followRegionRedirects: true
     });
   }
 
-  public async fetchImage(url: string, headers?: Record<string, string>, requestId?: string): Promise<{ buffer: Buffer; metadata: { size: number; format?: string } }> {
+  public async fetchImage(url: string, headers?: Record<string, string>, requestId?: string, maxBodyBytes: number = this.maxBodyBytes): Promise<{ buffer: Buffer; metadata: { size: number; format?: string } }> {
     const startTime = Date.now();
     
     let result: { buffer: Buffer; contentType?: string };
     if (S3UrlHelper.isS3Url(url)) {
-      result = await this.fetchFromS3(url, headers);
+      result = await this.fetchFromS3(url, headers, maxBodyBytes);
     } else if (url.startsWith('http://') || url.startsWith('https://')) {
       try {
         UrlValidator.validate(url);
       } catch (error) {
         throw new ImageProcessingError(400, 'InvalidUrl', 'Invalid URL', `URL validation failed for '${url}': ${error instanceof Error ? error.message : 'Unknown validation error'}`);
       }
-      result = await this.fetchFromHttp(url, headers);
+      result = await this.fetchFromHttp(url, headers, maxBodyBytes);
     } else {
       throw new ImageProcessingError(400, 'InvalidUrl', 'Unsupported URL protocol', `URL '${url}' uses an unsupported protocol. Only http://, https://, and s3:// are supported.`);
     }
 
-    // Normalize once so a parameter (e.g. '; charset=...') can't dodge the downstream exact-key
-    // lookups and skip magic-number validation, reopening the SSRF raw-body read (finding a3ede07f).
-    const mediaType = result.contentType ? this.normalizeMediaType(result.contentType) : undefined;
-
-    this.validateImageMagicNumbers(result.buffer, mediaType, url);
-    const fetchDurationMs = Date.now() - startTime;
-
-    console.log(JSON.stringify({
-      requestId: requestId || 'unknown',
-      component: 'OriginFetcher',
-      operation: 'image_fetched',
+    const mediaType = this.validateImage(result.buffer, result.contentType, url);
+    this.logImageFetched({
+      requestId,
       originType: S3UrlHelper.isS3Url(url) ? 's3' : 'http',
-      url: this.sanitizeUrl(url),
-      contentType: mediaType,
+      url,
+      mediaType,
       sizeBytes: result.buffer.length,
-      fetchDurationMs
-    }));
+      fetchDurationMs: Date.now() - startTime
+    });
 
-    const format = mediaType?.replace('image/', '');
     return {
       buffer: result.buffer,
       metadata: {
         size: result.buffer.length,
-        format
+        format: mediaType?.replace('image/', '')
       }
     };
   }
 
-  private async fetchFromS3(url: string, headers?: Record<string, string>): Promise<{ buffer: Buffer; contentType?: string }> {
+  /** Fails closed on a missing or non-allowlisted Content-Type; call before reading the body (finding a3ede07f). */
+  public assertAllowedContentType(contentType: string | undefined | null, url: string, originType: 's3' | 'http'): void {
+    if (contentType && this.isValidImageContentType(contentType)) return;
+    const origin = originType === 's3' ? 'S3 origin' : 'Origin';
+    throw new ImageProcessingError(
+      415,
+      'InvalidContentType',
+      `Invalid content type: ${contentType ?? 'missing'}`,
+      `${origin} '${urlWithoutQuery(url)}' returned unsupported Content-Type '${contentType ?? 'missing'}'.`
+    );
+  }
+
+  /** Validates the fetched bytes against their declared type and returns the normalized media type. */
+  public validateImage(buffer: Buffer, contentType: string | undefined, url: string): string | undefined {
+    // Normalize once so a parameter (e.g. '; charset=...') can't dodge the downstream exact-key
+    // lookups and skip magic-number validation, reopening the SSRF raw-body read (finding a3ede07f).
+    const mediaType = contentType ? this.normalizeMediaType(contentType) : undefined;
+    this.validateImageMagicNumbers(buffer, mediaType, url);
+    return mediaType;
+  }
+
+  /** Emits the `image_fetched` event that the ECS origin-type solution metric counts. */
+  public logImageFetched(event: { requestId?: string; originType: 's3' | 'http'; url: string; mediaType?: string; sizeBytes: number; fetchDurationMs: number }): void {
+    console.log(JSON.stringify({
+      requestId: event.requestId || 'unknown',
+      component: 'OriginFetcher',
+      operation: 'image_fetched',
+      originType: event.originType,
+      url: urlWithoutQuery(event.url),
+      contentType: event.mediaType,
+      sizeBytes: event.sizeBytes,
+      fetchDurationMs: event.fetchDurationMs
+    }));
+  }
+
+  private async fetchFromS3(url: string, headers?: Record<string, string>, maxBodyBytes: number = this.maxBodyBytes): Promise<{ buffer: Buffer; contentType?: string }> {
     // S3 enforces its own deadline via the SDK client timeout (getOptions()), not this AbortController.
     try {
       const { bucket, key } = S3UrlHelper.parseS3Url(url);
-      console.log(`Attempting to fetch from bucket: ${bucket} and key: ${key}`)      
+      console.log(JSON.stringify({ component: 'OriginFetcher', operation: 's3_fetch_attempt', bucket, key }));
       const commandInput: any = { Bucket: bucket, Key: key };
       
       if (headers) {
@@ -87,21 +115,26 @@ export class OriginFetcher {
         throw new ImageProcessingError(404, 'ImageNotFound', 'Image not found in S3', `S3 GetObject returned empty body for '${url}'.`);
       }
 
-      const buffer = Buffer.isBuffer(response.Body) 
-        ? response.Body 
-        : Buffer.from(await response.Body.transformToByteArray());
-
       // Fail closed on missing/non-image Content-Type, mirroring fetchFromHttp (Guardian Post 4a).
       const contentType = response.ContentType;
-      if (!contentType || !this.isValidImageContentType(contentType)) {
-        throw new ImageProcessingError(
-          415,
-          'InvalidContentType',
-          `Invalid content type: ${contentType ?? 'missing'}`,
-          `S3 origin '${url}' returned unsupported Content-Type '${contentType ?? 'missing'}'.`
-        );
+      const body = response.Body as any;
+      let declaredLength: number | undefined;
+      try {
+        this.assertAllowedContentType(contentType, url, 's3');
+        declaredLength = assertDeclaredLength(response.ContentLength, maxBodyBytes, url);
+      } catch (error) {
+        // Release the pooled socket when we reject a response without reading its body.
+        body.destroy?.();
+        throw error;
       }
 
+      let buffer: Buffer;
+      if (Buffer.isBuffer(body)) {
+        assertDeclaredLength(body.length, maxBodyBytes, url);
+        buffer = body;
+      } else {
+        buffer = await readNodeStreamWithLimit(body, maxBodyBytes, url, declaredLength);
+      }
       return { buffer, contentType };
     } catch (error) {
       if (error instanceof Error && error.message === 'Invalid S3 URL format') {
@@ -111,11 +144,12 @@ export class OriginFetcher {
     }
   }
 
-  private async fetchFromHttp(url: string, headers?: Record<string, string>): Promise<{ buffer: Buffer; contentType?: string }> {
+  private async fetchFromHttp(url: string, headers?: Record<string, string>, maxBodyBytes: number = this.maxBodyBytes): Promise<{ buffer: Buffer; contentType?: string }> {
     const controller = new AbortController();
     // Keep the timer armed through the body read (cleared only in finally), else a trickling origin
     // holds the socket past httpTimeout; an abort mid-read surfaces as 504 RequestTimeout (Post 8).
     const timeoutId = setTimeout(() => controller.abort(), this.httpTimeout);
+    let response: Response | undefined;
 
     try {
       const fetchHeaders: Record<string, string> = {
@@ -123,7 +157,7 @@ export class OriginFetcher {
         ...headers
       };
 
-      const response = await fetch(url, {
+      response = await fetch(url, {
         method: 'GET',
         // Don't follow redirects: a redirect hop isn't re-validated and could reach a destination
         // that bypassed origin validation. Matches the HEAD preflight, which already uses 'error'.
@@ -144,19 +178,15 @@ export class OriginFetcher {
       // Fail closed on a missing or non-image Content-Type: without this, a zero-transformation
       // request returns an internal response body unmodified, i.e. an SSRF read (finding a3ede07f).
       const contentType = response.headers.get('content-type');
-      if (!contentType || !this.isValidImageContentType(contentType)) {
-        throw new ImageProcessingError(
-          415,
-          'InvalidContentType',
-          `Invalid content type: ${contentType ?? 'missing'}`,
-          `Origin '${url}' returned unsupported Content-Type '${contentType ?? 'missing'}'.`
-        );
-      }
+      this.assertAllowedContentType(contentType, url, 'http');
+      const declaredLength = assertDeclaredLength(response.headers.get('content-length'), maxBodyBytes, url);
 
       // Still under the abort timer: an abort here rejects → mapped to 504 below.
-      const arrayBuffer = await response.arrayBuffer();
-      return { buffer: Buffer.from(arrayBuffer), contentType: contentType || undefined };
+      const buffer = await readWebStreamWithLimit(response.body, maxBodyBytes, url, declaredLength);
+      return { buffer, contentType: contentType || undefined };
     } catch (error) {
+      // Release the socket when we reject a response before or while reading its body.
+      response?.body?.cancel().catch(() => {});
       if (error.name === 'AbortError') {
         throw new ImageProcessingError(504, 'RequestTimeout', 'Origin request timeout', `HTTP request to '${url}' exceeded ${this.httpTimeout}ms timeout.`);
       }
@@ -276,14 +306,5 @@ export class OriginFetcher {
       'Failed to fetch image',
       `Unexpected error fetching '${url}': ${error.name} - ${error.message}`
     );
-  }
-
-  private sanitizeUrl(url: string): string {
-    try {
-      const urlObj = new URL(url);
-      return `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
-    } catch {
-      return url.split('?')[0]; // Fallback: remove query params
-    }
   }
 }

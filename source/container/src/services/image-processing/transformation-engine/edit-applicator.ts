@@ -11,11 +11,12 @@ import { CacheRegistry } from '../../cache/cache-registry';
 import { OriginFetcher } from '../origin-fetcher';
 import { SmartCropService } from '../../smart-crop/smart-crop.service';
 import { ContentModerationService } from '../../content-moderation/content-moderation.service';
+import { ORIGIN_BODY_LIMIT_BYTES } from '../../../utils/origin-body-limit';
 
 export class EditApplicator {
   private static originFetcher: OriginFetcher;
 
-  static async applyEdits(image: Sharp, edits: ImageEdits, originFetcher: OriginFetcher): Promise<void> {
+  static async applyEdits(image: Sharp, edits: ImageEdits, originFetcher: OriginFetcher, primaryBytes = 0): Promise<void> {
     this.originFetcher = originFetcher;
     try {
       const metadata = await image.metadata();
@@ -30,7 +31,9 @@ export class EditApplicator {
         await ContentModerationService.getInstance().execute(image, edits.contentModeration);
       }
 
-      // For efficiency we attempt resizing prior to other image transformations. Certain transforms will defer resizing (watermark, crop, etc)
+      // Resize runs first for efficiency, but is deferred to after the loop when extract or composite is present:
+      // extract coordinates and watermark offsets/ratios refer to source dimensions. Sharp keeps only the last
+      // resize(), so it is set once.
       await this.applyResize(image, edits);
 
       for (const [operation, value] of Object.entries(edits)) {
@@ -41,7 +44,7 @@ export class EditApplicator {
             case 'contentModeration':
               break;
             case 'composite':
-              await this.applyWatermark(image, value);
+              await this.applyWatermark(image, value, primaryBytes);
               break;
             case 'sharpen':
               this.applySharpen(image, value)
@@ -55,7 +58,6 @@ export class EditApplicator {
               break;
             default:
               if (SharpUtils.isAllowedTransformation(operation)) {
-                console.log("Apply Edit Base case for: ", operation, " with value: ", value);
                 image[operation](value);
               }
               break;
@@ -140,7 +142,7 @@ export class EditApplicator {
   }
 
 
-  private static async applyWatermark(image: Sharp, edit: Record<string, any>) {
+  private static async applyWatermark(image: Sharp, edit: Record<string, any>, primaryBytes: number) {
     try {
       const { source, offSetArray } = edit;
       const [top, left, alpha, wRatio, hRatio] = offSetArray;
@@ -148,7 +150,7 @@ export class EditApplicator {
       
       console.debug('Watermark params:', { source, offSetArray, baseImageSize: { width: metadata.width, height: metadata.height } });
       
-      const overlayBuffer = await this.getOverlayImage(source, wRatio, hRatio, alpha, metadata);
+      const overlayBuffer = await this.getOverlayImage(source, wRatio, hRatio, alpha, metadata, primaryBytes);
       const leftPos = this.calcOverlaySizeOption(left || 0, metadata.width, overlayBuffer.info.width);
       const topPos = this.calcOverlaySizeOption(top || 0, metadata.height, overlayBuffer.info.height);
       
@@ -160,12 +162,14 @@ export class EditApplicator {
     }
   }
 
-  private static async getOverlayImage(source: string, wRatio: number, hRatio: number, alpha: number, baseMetadata: Metadata): Promise<{ data: Buffer; info: OutputInfo }> {
+  private static async getOverlayImage(source: string, wRatio: number, hRatio: number, alpha: number, baseMetadata: Metadata, primaryBytes: number): Promise<{ data: Buffer; info: OutputInfo }> {
     const normalizedSource = this.normalizeSource(source);
     const url = new URL(normalizedSource);
     const targetOrigin = url.host;
     
     const originCache = CacheRegistry.getInstance().getOriginCache();
+    // Overlay allowlist: url.host must equal a registered originDomain exactly (no subdomain or prefix match).
+    // The overlay fetch below sends no originHeaders.
     const origins = await originCache.getContents();
     const origin = origins.find(o => o.originDomain === targetOrigin);
     if (!origin) {
@@ -174,11 +178,13 @@ export class EditApplicator {
     
     let buffer: Buffer;
     try {
-      ({ buffer } = await this.originFetcher.fetchImage(url.href))
+      // The primary image is still in memory, so the overlay gets only what is left of the per-request limit.
+      const overlayLimit = Math.max(0, ORIGIN_BODY_LIMIT_BYTES - primaryBytes);
+      ({ buffer } = await this.originFetcher.fetchImage(url.href, undefined, undefined, overlayLimit));
     } catch (error) {
       if (error instanceof ImageProcessingError) {
         const errorType = error.statusCode === 404 ? 'OverlayImageNotFound' : 'OverlayFetchError';
-        throw new ImageProcessingError(error.statusCode, errorType, `Failed to fetch overlay image: ${error.message}`);
+        throw new ImageProcessingError(error.statusCode, errorType, `Failed to fetch overlay image: ${error.message}`, error.verboseDescription);
       }
       throw error;
     }

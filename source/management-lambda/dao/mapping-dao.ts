@@ -5,7 +5,7 @@ import { DynamoDBDocumentClient, GetCommand, QueryCommand, QueryCommandInput } f
 import { z } from "zod";
 import { Mapping } from "../../data-models";
 import { ErrorCodes, logger, NotFoundError } from "../common";
-import { DBEntityType, DBMapping, validateMappingItem } from "../interfaces";
+import { DBEntityType, DBMapping, KeyRecord, validateMappingItem } from "../interfaces";
 import { BaseDAO } from "./base-dao";
 
 export class MappingDAO extends BaseDAO<DBMapping, Mapping> {
@@ -40,6 +40,7 @@ export class MappingDAO extends BaseDAO<DBMapping, Mapping> {
     let pathMappings: { items: DBMapping[]; nextToken?: Record<string, any> } = { items: [] };
     let hostHeaderMappings: { items: DBMapping[]; nextToken?: Record<string, any> } = { items: [] };
 
+    // With a token, a type whose cursor is absent is exhausted, so it is skipped rather than re-read from page 1.
     // Query path mappings if no token or if pathCursor exists
     if (!nextToken || pathCursor) {
       pathMappings = await this.queryWithCursor(pathCursor, DBEntityType.PATH_MAPPING);
@@ -101,6 +102,15 @@ export class MappingDAO extends BaseDAO<DBMapping, Mapping> {
       items,
       nextToken: data.LastEvaluatedKey,
     };
+  }
+
+  // mapping names are unique across both mapping types, so the check reads both partitions
+  async getKeyRecords(): Promise<KeyRecord[]> {
+    const [pathRecords, hostRecords] = await Promise.all([
+      this.queryKeyRecords(DBEntityType.PATH_MAPPING),
+      this.queryKeyRecords(DBEntityType.HOST_HEADER_MAPPING),
+    ]);
+    return [...pathRecords, ...hostRecords];
   }
 
   // override base class create to validate Origin and Policy exists before creating Mapping
